@@ -59,54 +59,37 @@ from gem5.resources.resource import DiskImageResource, KernelResource
 requires(
     isa_required=ISA.X86,
 )
-from gem5.components.cachehierarchies.classic.private_l1_private_l2_shared_l3_cache_hierarchy import (
-    PrivateL1PrivateL2SharedL3CacheHierarchy,
-)
-from gem5.components.cachehierarchies.classic.private_l1_private_l2_cache_hierarchy import (
-    PrivateL1PrivateL2CacheHierarchy,
-)
 from gem5.components.cachehierarchies.classic.private_l1_cache_hierarchy import (
     PrivateL1CacheHierarchy,
 )
 parser = argparse.ArgumentParser(description='CXL system parameters.')
 parser.add_argument('--is_asic', action='store', type=str, nargs='?', choices=['True', 'False'], default='True', help='Choose to simulate CXL ASIC Device or FPGA Device.')
-parser.add_argument('--test_cmd', type=str, choices=['lmbench_cxl.sh', 
+parser.add_argument('--test_cmd0', type=str, choices=['lmbench_cxl.sh', 
                                                      'lmbench_dram.sh', 
                                                      'merci_dram.sh', 
                                                      'merci_cxl.sh', 
                                                      'merci_dram+cxl.sh',
                                                      'stream_dram.sh',
-                                                     'stream_cxl.sh', 'lmbench_cxl_new_cpu0.sh', 'lmbench_cxl_new_cpu1.sh'
+                                                     'stream_cxl.sh'
                                                      ], default='lmbench_cxl.sh', help='Choose a test to run.')
-parser.add_argument('--num_cpus', type=int, default=1, help='Number of CPUs')
+parser.add_argument(
+    '--test_cmd1',
+    type=str,
+    choices=[
+        'lmbench_cxl.sh', 'lmbench_dram.sh',
+        'merci_dram.sh', 'merci_cxl.sh', 'merci_dram+cxl.sh',
+        'stream_dram.sh', 'stream_cxl.sh'
+    ],
+    default='lmbench_cxl.sh',
+    help='Benchmark for socket 1'
+)
+parser.add_argument('--num_cpus', type=int, default=2, help='Number of CPUs')
 parser.add_argument('--cpu_type', type=str, choices=['TIMING', 'O3'], default='TIMING', help='CPU type')
 parser.add_argument('--cxl_mem_type', type=str, choices=['Simple', 'DRAM'], default='DRAM', help='CXL memory type')
 
 args = parser.parse_args()
 
 # Here we setup a MESI Three Level Cache Hierarchy.
-# cache_hierarchy = PrivateL1PrivateL2SharedL3CacheHierarchy(
-#     l1d_size="48kB",
-#     l1d_assoc=6,
-#     l1i_size="32kB",
-#     l1i_assoc=8,
-#     l2_size="2MB",
-#     l2_assoc=16,
-#     l3_size="96MB",
-#     l3_assoc=48,
-# )
-
-# cache_hierarchy = PrivateL1PrivateL2CacheHierarchy(
-#     l1d_size="64KiB",
-#     # l1d_assoc=6,
-#     l1i_size="32KiB",
-#     # l1i_assoc=8,
-#     l2_size="2MiB",
-#     # l2_assoc=16,
-#     # l3_size="96MB",
-#     # l3_assoc=48,
-# )
-
 cache_hierarchy = PrivateL1CacheHierarchy(
     l1d_size="16KiB",
     # l1d_assoc=6,
@@ -118,8 +101,10 @@ cache_hierarchy = PrivateL1CacheHierarchy(
     # l3_assoc=48,
 )
 
+
 # Setup the system memory.
-memory = DIMM_DDR5_4400(size="3GB")
+dram = DIMM_DDR5_4400(size="3GB")
+# dram1 = DIMM_DDR5_4400(size="4.1GB")
 if args.is_asic:
     cxl_memory = DIMM_DDR5_4400(size="8GB")
 else:
@@ -137,12 +122,14 @@ processor = SimpleSwitchableProcessor(
     isa=ISA.X86,
     num_cores=args.num_cpus,
 )
+for idx, core_wrapper in enumerate(processor.get_cores()): #method in switchable_processor.py
+    core_wrapper.core.socket_id = idx
 
 # Here we setup the board and CXL device memory size. The X86Board allows for Full-System X86 simulations.
 board = X86Board(
     clk_freq="2.4GHz",
     processor=processor,
-    memory=memory,
+    memory=dram,
     cache_hierarchy=cache_hierarchy,
     cxl_memory=cxl_memory,
     is_asic=(args.is_asic == 'True')
@@ -157,18 +144,22 @@ board = X86Board(
 # and continue the simulation to run the command. After simulation
 # has ended you may inspect `m5out/board.pc.com_1.device` to see the echo
 # output.
-# cmd0 = f"/home/cxl_benchmark/{args.test_cmd}"
+
+half = args.num_cpus // 2
 cmd0 = f"/home/cxl_benchmark/lmbench_cxl_new_cpu0.sh"
-# readfile = (
+cmd1 = f"/home/cxl_benchmark/lmbench_cxl_new_cpu1.sh"
+
+# command = (
 #     "m5 exit;"
 #     "numactl -H;"
-#     f"sed -i 's/-N[[:space:]]*2/-N 1/' {cmd0} ; "
 #     "m5 resetstats;"
-#     f"OMP_NUM_THREADS=1 taskset -c 0 numactl --membind=1 {cmd0};"
+#     f"taskset -c 0 {cmd0} & "
+#     f"taskset -c {half} {cmd1} ; "
 #     "wait;"
-#     "m5 dumpstats;"
 #     "m5 exit;"
 # )
+cmd436_cpu0=f"/home/cxl_benchmark/spec2006_train/436.cactusADM/run_436_cpu0.sh"
+cmd436_cpu1=f"/home/cxl_benchmark/spec2006_train/436.cactusADM/run_436_cpu1.sh"
 
 readfile = (
     "m5 exit; "
@@ -180,26 +171,34 @@ readfile = (
     + "export OMP_NUM_THREADS=1 ; "
     + "cd /home/cxl_benchmark/spec2006_train/436.cactusADM; "
     + "m5 resetstats; "
-    # + "taskset -c 0 "
-    # + f"{cmd0} & "
     + "taskset -c 0 "
-    + f"{cmd0} ; "
+    + f"{cmd436_cpu0} & "
+    + "taskset -c 1 "
+    + f"{cmd436_cpu1} ; "
     + "wait; "
     + "m5 dumpstats; "
     + "m5 exit; "
 )
+
+
 # readfile = (
 #     "m5 exit;"
-#     "numactl -H;"
-#     "m5 resetstats;"
-#     # --- patch the benchmark script so it uses -N 1 instead of -N 2 ---
-#     f"sed -i 's/-N[[:space:]]*2/-N 1/' {cmd0} ; "
+#     + "numactl -H;"
+#     + "m5 resetstats;"
 #     # ------------------------------------------------------------------
-#     "OMP_NUM_THREADS=1 taskset -c 0 numactl --membind=1 "
+#     + ""
+#     + "m5 resetstats;"
+#     + "OMP_NUM_THREADS=1 taskset -c 0 numactl --membind=1 "
 #         f"{cmd0} & "
-#     "wait;"
-#     "m5 exit;"
+#     + "OMP_NUM_THREADS=1 taskset -c 1 numactl --membind=1 "
+#         f"{cmd1} ; "
+#     + "wait;"
+#     + "m5 dumpstats;"
+#     + "m5 exit;"
 # )
+
+#    + f"sed -i 's/-N[[:space:]]*2/-N 1/' {cmd0} ; " #change no of workers in bash script
+
 # Please modify the paths of kernel and disk_image according to the location of your files.
 board.set_kernel_disk_workload(
     kernel=KernelResource(local_path='/home/stavros/cxl_image/vmlinux_20240920'),
@@ -214,9 +213,8 @@ simulator = Simulator(
     },
 )
 
-print("Running the simulation")
-print("Using Atomic cpu")
 
+print("Starting FS boot (Atomic)...")
 m5.stats.reset()
-
 simulator.run()
+print("Simulation complete.")

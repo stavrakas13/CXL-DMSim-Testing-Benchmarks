@@ -92,7 +92,7 @@ class PrivateL1PrivateL2CacheHierarchy(
             l1i_size=l1i_size,
             l1i_assoc=8,
             l1d_size=l1d_size,
-            l1d_assoc=8,
+            l1d_assoc=6,
             l2_size=l2_size,
             l2_assoc=4,
         )
